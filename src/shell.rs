@@ -590,7 +590,7 @@ fn cmd_reboot() {
             x86_64::instructions::port::Port::new(0x64);
         port.write(0xFE);
     }
-    // フォールバック: トリプルフォルト
+    
     loop {
         x86_64::instructions::hlt();
     }
@@ -604,7 +604,7 @@ fn cmd_shutdown() {
             x86_64::instructions::port::Port::new(0xf4);
         port.write(0x00);
     }
-    // ACPI shutdown (Bochs/QEMU)
+    // ACPI shutdown (QEMU)
     unsafe {
         let mut port: x86_64::instructions::port::Port<u16> =
             x86_64::instructions::port::Port::new(0x604);

@@ -25,7 +25,7 @@ entry_point!(kernel_main);
 
 fn kernel_main(boot_info: &'static BootInfo) -> ! {
     // === Phase 1: 基本初期化 ===
-    // GDT (Global Descriptor Table) の設定
+    // GDTの設定
     gdt::init();
 
     // IDT (Interrupt Descriptor Table) の設定
