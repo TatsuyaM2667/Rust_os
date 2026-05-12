@@ -144,10 +144,6 @@ impl Writer {
         self.color_code = ColorCode::new(foreground, background);
     }
 
-    pub fn get_position(&self) -> (usize, usize) {
-        (self.row_position, self.column_position)
-    }
-
     // カーソル位置を更新（ハードウェアカーソル）
     pub fn update_cursor(&self) {
         let pos = self.row_position * BUFFER_WIDTH + self.column_position;
