@@ -136,6 +136,7 @@ pub struct Writer {
     y_pos: usize,
     fg_color: u32,
     bg_color: u32,
+    scale: usize,
 }
 
 impl Writer {
@@ -147,6 +148,7 @@ impl Writer {
             y_pos: 0,
             fg_color: Color::White as u32,
             bg_color: Color::Black as u32,
+            scale: 2,
         };
         writer.clear_screen();
         writer
@@ -191,10 +193,13 @@ impl Writer {
             '\n' => self.newline(),
             '\x08' => self.backspace(),
             _ => {
-                if self.x_pos + 8 >= self.info.width {
+                let char_width = 8 * self.scale;
+                let char_height = 8 * self.scale;
+
+                if self.x_pos + char_width >= self.info.width {
                     self.newline();
                 }
-                if self.y_pos + 8 >= self.info.height {
+                if self.y_pos + char_height >= self.info.height {
                     self.scroll();
                 }
 
@@ -208,28 +213,37 @@ impl Writer {
                             } else {
                                 self.bg_color
                             };
-                            self.write_pixel(self.x_pos + col, self.y_pos + row, color);
+                            
+                            // Draw scaled pixel
+                            for dy in 0..self.scale {
+                                for dx in 0..self.scale {
+                                    self.write_pixel(self.x_pos + col * self.scale + dx, self.y_pos + row * self.scale + dy, color);
+                                }
+                            }
                         }
                     }
                 }
-                self.x_pos += 8;
+                self.x_pos += char_width;
             }
         }
     }
 
     fn newline(&mut self) {
         self.x_pos = 0;
-        self.y_pos += 8;
-        if self.y_pos + 8 >= self.info.height {
+        self.y_pos += 8 * self.scale;
+        if self.y_pos + 8 * self.scale >= self.info.height {
             self.scroll();
         }
     }
 
     fn backspace(&mut self) {
-        if self.x_pos >= 8 {
-            self.x_pos -= 8;
-            for row in 0..8 {
-                for col in 0..8 {
+        let char_width = 8 * self.scale;
+        let char_height = 8 * self.scale;
+
+        if self.x_pos >= char_width {
+            self.x_pos -= char_width;
+            for row in 0..char_height {
+                for col in 0..char_width {
                     self.write_pixel(self.x_pos + col, self.y_pos + row, self.bg_color);
                 }
             }
@@ -238,7 +252,7 @@ impl Writer {
 
     fn scroll(&mut self) {
         // Simple scroll by clearing screen if it's too much (robust for now)
-        if self.y_pos + 16 >= self.info.height {
+        if self.y_pos + 16 * self.scale >= self.info.height {
             self.clear_screen();
         }
     }

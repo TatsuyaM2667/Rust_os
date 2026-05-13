@@ -3,10 +3,10 @@ name = "rust_os"
 version = "0.1.0"
 edition = "2021"
 authors = ["Tatsuya <tatsuyamiura2667@gmail.com>"]
+default-run = "rust_os"
 
 [dependencies]
 bootloader_api = "0.11"
-bootloader = "0.11"
 volatile = "0.2.6"
 spin = "0.5.2"
 x86_64 = "0.14.13"

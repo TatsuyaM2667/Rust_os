@@ -1,41 +1,47 @@
 #!/bin/bash
 # A simple script to help run the kernel in QEMU with UEFI
+set -e
 
-KERNEL_BINARY=$1
-OVMF_PATH="/usr/share/ovmf/OVMF.fd" # Default path on many Linux distros
+# 絶対パスに変換
+KERNEL_BINARY=$(realpath "$1")
+UEFI_IMAGE="${KERNEL_BINARY}_uefi.img"
+OVMF_PATH="/usr/share/ovmf/OVMF.fd"
 
-if [ ! -f "$OVMF_PATH" ]; then
-    # Try other common paths
-    if [ -f "/usr/share/edk2/x64/OVMF.4m.fd" ]; then
-        OVMF_PATH="/usr/share/edk2/x64/OVMF.4m.fd"
-    elif [ -f "/usr/share/OVMF/OVMF_CODE.fd" ]; then
-        OVMF_PATH="/usr/share/OVMF/OVMF_CODE.fd"
-    elif [ -f "/usr/share/ovmf/x64/OVMF_CODE.fd" ]; then
-        OVMF_PATH="/usr/share/ovmf/x64/OVMF_CODE.fd"
-    elif [ -f "/usr/share/edk2-ovmf/x64/OVMF_CODE.fd" ]; then
-        OVMF_PATH="/usr/share/edk2-ovmf/x64/OVMF_CODE.fd"
-    elif [ -f "/usr/share/edk2/x64/OVMF_CODE.fd" ]; then
-        OVMF_PATH="/usr/share/edk2/x64/OVMF_CODE.fd"
-    else
-        echo "Error: OVMF.fd not found."
-        echo "Please install OVMF. On Arch: sudo pacman -S edk2-ovmf"
-        echo "On Ubuntu: sudo apt install ovmf"
-        exit 1
+# OVMFのパス検出
+for path in "/usr/share/ovmf/OVMF.fd" "/usr/share/edk2/x64/OVMF.4m.fd" "/usr/share/OVMF/OVMF_CODE.fd" "/usr/share/ovmf/x64/OVMF_CODE.fd" "/usr/share/edk2-ovmf/x64/OVMF_CODE.fd" "/usr/share/edk2/x64/OVMF_CODE.fd"; do
+    if [ -f "$path" ]; then
+        OVMF_PATH="$path"
+        break
     fi
+done
+
+# イメージファイルを一旦削除
+rm -f "$UEFI_IMAGE"
+
+# ビルダーを実行してイメージを作成
+echo "Converting ELF to UEFI boot image..."
+
+if [ -d ".cargo" ]; then
+    mv .cargo .cargo_temp
+    trap 'mv .cargo_temp .cargo' EXIT
 fi
 
-# In UEFI, the binary should ideally be an EFI application.
-# For now, we are building a raw ELF. bootloader_api v0.11 kernels are usually combined 
-# with the bootloader crate in a separate builder.
+# builderディレクトリで実行（絶対パスを渡す）
+(cd builder && cargo run -- "$KERNEL_BINARY")
 
-echo "Kernel Binary: $KERNEL_BINARY"
-echo "Note: Direct booting of ELF as a raw drive might not work without a UEFI-compatible GPT image."
-echo "Running in QEMU with OVMF..."
+if [ -d ".cargo_temp" ]; then
+    mv .cargo_temp .cargo
+    trap - EXIT
+fi
 
-# Attempt to run with QEMU. Note that for true UEFI testing, 
-# a proper disk image (GPT + FAT32) is recommended.
+if [ ! -f "$UEFI_IMAGE" ]; then
+    echo "Error: Failed to create UEFI image at $UEFI_IMAGE"
+    exit 1
+fi
+
+echo "Running in QEMU..."
 qemu-system-x86_64 \
-    -bios $OVMF_PATH \
-    -drive format=raw,file=$KERNEL_BINARY \
+    -bios "$OVMF_PATH" \
+    -drive format=raw,file="$UEFI_IMAGE" \
     -serial stdio \
     -display gtk

@@ -28,14 +28,22 @@ pub fn init(
                 rx_frames.push(frame_allocator.allocate_frame().expect("No frames for RX buffer"));
             }
 
-            // 本来は連続した領域が必要。BootInfoアロケータは通常連続して確保する。
-            let rx_buf_phys = rx_frames[0].start_address().as_u64() as u32;
-            let rx_buf_virt = (phys_mem_offset + rx_buf_phys as u64).as_mut_ptr();
+            // RTL8139は32ビットDMAのみ対応しているため、4GB以下のメモリが必要
+            let rx_buf_phys_64 = rx_frames[0].start_address().as_u64();
+            if rx_buf_phys_64 > 0xFFFF_FFFF {
+                panic!("RTL8139 RX buffer allocated above 4GB: 0x{:x}", rx_buf_phys_64);
+            }
+            let rx_buf_phys = rx_buf_phys_64 as u32;
+            let rx_buf_virt = (phys_mem_offset + rx_buf_phys_64).as_mut_ptr();
 
             // TXバッファの確保 (1フレーム = 4KB, 4つのTX記述子に十分)
             let tx_frame = frame_allocator.allocate_frame().expect("No frame for TX buffers");
-            let tx_buf_phys = tx_frame.start_address().as_u64() as u32;
-            let tx_buf_virt = (phys_mem_offset + tx_buf_phys as u64).as_mut_ptr();
+            let tx_buf_phys_64 = tx_frame.start_address().as_u64();
+            if tx_buf_phys_64 > 0xFFFF_FFFF {
+                panic!("RTL8139 TX buffer allocated above 4GB: 0x{:x}", tx_buf_phys_64);
+            }
+            let tx_buf_phys = tx_buf_phys_64 as u32;
+            let tx_buf_virt = (phys_mem_offset + tx_buf_phys_64).as_mut_ptr();
             
             let rtl = rtl8139::Rtl8139::new(&dev, rx_buf_phys, rx_buf_virt, tx_buf_phys, tx_buf_virt);
             *RTL8139_DEVICE.lock() = Some(rtl);

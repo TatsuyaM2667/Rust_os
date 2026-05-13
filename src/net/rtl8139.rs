@@ -151,13 +151,27 @@ impl RxToken for Rtl8139RxToken {
             let offset = *self.rx_offset_ptr;
             let rx_ptr = self.rx_buf_virt.add(offset);
             let header = *(rx_ptr as *const u32);
+            let status = (header & 0xFFFF) as u16;
             let length = (header >> 16) as usize;
             
+            // Sanity check for length and status (ROK bit 0)
+            if (status & 1) == 0 || length < 4 || length > 1536 {
+                // Invalid packet or corruption
+                return f(&mut []);
+            }
+
             let data = core::slice::from_raw_parts_mut(rx_ptr.add(4), length - 4);
             let result = f(data);
 
-            *self.rx_offset_ptr = (offset + length + 4 + 3) & !3;
-            Port::<u16>::new(self.io_base + REG_CAPR).write((*self.rx_offset_ptr as u16).wrapping_sub(16));
+            // Update offset and wrap around 8K buffer
+            let mut next_offset = (offset + length + 4 + 3) & !3;
+            if next_offset >= 8192 {
+                next_offset -= 8192;
+            }
+            *self.rx_offset_ptr = next_offset;
+            
+            // CAPR points to the end of the last read packet
+            Port::<u16>::new(self.io_base + REG_CAPR).write((next_offset as u16).wrapping_sub(16));
 
             result
         }

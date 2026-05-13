@@ -38,16 +38,50 @@ lazy_static! {
     static ref IDT: InterruptDescriptorTable = {
         let mut idt = InterruptDescriptorTable::new();
         idt.breakpoint.set_handler_fn(breakpoint_handler);
+        idt.general_protection_fault.set_handler_fn(gpf_handler);
+        idt.stack_segment_fault.set_handler_fn(stack_segment_fault_handler);
+        idt.invalid_opcode.set_handler_fn(invalid_opcode_handler);
+        
         unsafe {
             idt.double_fault
                 .set_handler_fn(double_fault_handler)
                 .set_stack_index(gdt::DOUBLE_FAULT_IST_INDEX);
+            // ページフォルトは現在のスタックを使用するようにしてデバッグしやすくする
+            idt.page_fault
+                .set_handler_fn(page_fault_handler);
         }
         idt[InterruptIndex::Timer.as_usize()].set_handler_fn(timer_interrupt_handler);
         idt[InterruptIndex::Keyboard.as_usize()].set_handler_fn(keyboard_interrupt_handler);
         idt[InterruptIndex::Network.as_usize()].set_handler_fn(network_interrupt_handler);
         idt
     };
+}
+
+extern "x86-interrupt" fn gpf_handler(stack_frame: InterruptStackFrame, error_code: u64) {
+    panic!("EXCEPTION: GENERAL PROTECTION FAULT\nError Code: {}\n{:#?}", error_code, stack_frame);
+}
+
+extern "x86-interrupt" fn stack_segment_fault_handler(stack_frame: InterruptStackFrame, error_code: u64) {
+    panic!("EXCEPTION: STACK SEGMENT FAULT\nError Code: {}\n{:#?}", error_code, stack_frame);
+}
+
+extern "x86-interrupt" fn invalid_opcode_handler(stack_frame: InterruptStackFrame) {
+    panic!("EXCEPTION: INVALID OPCODE\n{:#?}", stack_frame);
+}
+
+// ページフォルト例外
+extern "x86-interrupt" fn page_fault_handler(
+    stack_frame: InterruptStackFrame,
+    error_code: x86_64::structures::idt::PageFaultErrorCode,
+) {
+    use x86_64::registers::control::Cr2;
+    use crate::serial_println;
+    serial_println!("EXCEPTION: PAGE FAULT at {:?}", Cr2::read());
+    serial_println!("Error Code: {:?}", error_code);
+    serial_println!("{:#?}", stack_frame);
+    loop {
+        x86_64::instructions::hlt();
+    }
 }
 
 pub fn init_idt() {
@@ -84,7 +118,7 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStac
 
     let mut port = Port::new(0x60);
     let scancode: u8 = unsafe { port.read() };
-
+    
     // シェルにスキャンコードを送る
     shell::handle_scancode(scancode);
 
@@ -108,6 +142,8 @@ extern "x86-interrupt" fn network_interrupt_handler(_stack_frame: InterruptStack
 
 pub fn get_uptime_seconds() -> u64 {
     // PIT はデフォルトで約 18.2Hz
-    let ticks = *TICKS.lock();
+    let ticks = x86_64::instructions::interrupts::without_interrupts(|| {
+        *TICKS.lock()
+    });
     ticks / 18
 }

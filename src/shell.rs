@@ -73,12 +73,20 @@ fn print_prompt() {
 pub fn handle_scancode(scancode: u8) {
     let mut keyboard = KEYBOARD.lock();
 
-    if let Ok(Some(key_event)) = keyboard.add_byte(scancode) {
-        if let Some(key) = keyboard.process_keyevent(key_event) {
-            match key {
-                DecodedKey::Unicode(character) => handle_char(character),
-                DecodedKey::RawKey(key) => handle_raw_key(key),
+    match keyboard.add_byte(scancode) {
+        Ok(Some(key_event)) => {
+            if let Some(key) = keyboard.process_keyevent(key_event) {
+                match key {
+                    DecodedKey::Unicode(character) => handle_char(character),
+                    DecodedKey::RawKey(key) => handle_raw_key(key),
+                }
             }
+        }
+        Ok(None) => {
+            // Wait for more bytes (for multi-byte scancodes)
+        }
+        Err(_e) => {
+            // Error decoding scancode
         }
     }
 }
@@ -472,22 +480,28 @@ fn cmd_info() {
 
     // CPUID情報
     let cpuid = unsafe {
-        let mut vendor = [0u8; 12];
-        let result: u32;
+        let mut ebx: u32;
+        let mut edx: u32;
+        let mut ecx: u32;
+        let max_leaf: u32;
+        
         core::arch::asm!(
             "push rbx",
-            "xor eax, eax",
             "cpuid",
-            "mov [{vendor}], ebx",
-            "mov [{vendor} + 4], edx",
-            "mov [{vendor} + 8], ecx",
+            "mov {tmp:e}, ebx",
             "pop rbx",
-            vendor = in(reg) vendor.as_mut_ptr(),
-            out("eax") result,
-            out("ecx") _,
-            out("edx") _,
+            inout("eax") 0 => max_leaf,
+            tmp = out(reg) ebx,
+            out("edx") edx,
+            out("ecx") ecx,
         );
-        (result, vendor)
+
+        let mut vendor = [0u8; 12];
+        vendor[0..4].copy_from_slice(&ebx.to_le_bytes());
+        vendor[4..8].copy_from_slice(&edx.to_le_bytes());
+        vendor[8..12].copy_from_slice(&ecx.to_le_bytes());
+        
+        (max_leaf, vendor)
     };
 
     if let Ok(vendor_str) = core::str::from_utf8(&cpuid.1) {
