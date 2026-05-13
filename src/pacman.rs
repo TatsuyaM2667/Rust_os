@@ -41,10 +41,12 @@ pub fn install(name: &str) {
 
             // Save to database (mock)
             let db_path = alloc::format!("/var/lib/pacman/local/{}/desc", p.name);
+            fs.mkdir("/var").ok();
+            fs.mkdir("/var/lib").ok();
             fs.mkdir("/var/lib/pacman").ok();
             fs.mkdir("/var/lib/pacman/local").ok();
             fs.mkdir(&alloc::format!("/var/lib/pacman/local/{}", p.name)).ok();
-            fs.write_file(&db_path, p.description.as_bytes().to_vec()).unwrap();
+            fs.write_file(&db_path, p.description.as_bytes().to_vec()).expect("Failed to write package description");
 
             println!(":: Running post-transaction hooks...");
             println!("(1/1) Updating icon theme cache...");

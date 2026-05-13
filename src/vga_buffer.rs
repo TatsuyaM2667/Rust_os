@@ -1,189 +1,316 @@
-// RustOS - VGA テキストモードドライバ
-// 80x25 テキストバッファに直接書き込む
+// RustOS - Framebuffer Console (Replacing VGA Text Mode for UEFI)
+// Draws characters as pixels to the GOP framebuffer using an embedded font.
 
 use core::fmt;
-use lazy_static::lazy_static;
 use spin::Mutex;
-use volatile::Volatile;
+use bootloader_api::info::{FrameBufferInfo, PixelFormat};
 
-// VGA カラーパレット
+// Basic 8x8 font for ASCII 32..127
+// Each byte represents a row of 8 pixels.
+const FONT: [[u8; 8]; 96] = [
+    [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00], // (space)
+    [0x18, 0x3C, 0x3C, 0x18, 0x18, 0x00, 0x18, 0x00], // !
+    [0x6C, 0x6C, 0x6C, 0x00, 0x00, 0x00, 0x00, 0x00], // "
+    [0x6C, 0x6C, 0xFE, 0x6C, 0xFE, 0x6C, 0x6C, 0x00], // #
+    [0x18, 0x7E, 0xC0, 0x7C, 0x06, 0xFC, 0x18, 0x00], // $
+    [0x00, 0xC6, 0xCC, 0x18, 0x30, 0x66, 0xC6, 0x00], // %
+    [0x38, 0x6C, 0x38, 0x76, 0xDC, 0xCC, 0x76, 0x00], // &
+    [0x18, 0x18, 0x30, 0x00, 0x00, 0x00, 0x00, 0x00], // '
+    [0x0C, 0x18, 0x30, 0x30, 0x30, 0x18, 0x0C, 0x00], // (
+    [0x30, 0x18, 0x0C, 0x0C, 0x0C, 0x18, 0x30, 0x00], // )
+    [0x00, 0x66, 0x3C, 0xFF, 0x3C, 0x66, 0x00, 0x00], // *
+    [0x00, 0x18, 0x18, 0x7E, 0x18, 0x18, 0x00, 0x00], // +
+    [0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x18, 0x30], // ,
+    [0x00, 0x00, 0x00, 0x7E, 0x00, 0x00, 0x00, 0x00], // -
+    [0x00, 0x00, 0x00, 0x00, 0x00, 0x18, 0x18, 0x00], // .
+    [0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x00], // /
+    [0x3C, 0x66, 0x6E, 0x7E, 0x76, 0x66, 0x3C, 0x00], // 0
+    [0x18, 0x38, 0x18, 0x18, 0x18, 0x18, 0x7E, 0x00], // 1
+    [0x3C, 0x66, 0x06, 0x0C, 0x18, 0x30, 0x7E, 0x00], // 2
+    [0x3C, 0x66, 0x06, 0x1C, 0x06, 0x66, 0x3C, 0x00], // 3
+    [0x1C, 0x3C, 0x6C, 0xCC, 0xFE, 0x0C, 0x1E, 0x00], // 4
+    [0x7E, 0x60, 0x7C, 0x06, 0x06, 0x66, 0x3C, 0x00], // 5
+    [0x1C, 0x30, 0x60, 0x7C, 0x66, 0x66, 0x3C, 0x00], // 6
+    [0x7E, 0x06, 0x0C, 0x18, 0x30, 0x30, 0x30, 0x00], // 7
+    [0x3C, 0x66, 0x66, 0x3C, 0x66, 0x66, 0x3C, 0x00], // 8
+    [0x3C, 0x66, 0x66, 0x3E, 0x06, 0x0C, 0x38, 0x00], // 9
+    [0x00, 0x18, 0x18, 0x00, 0x18, 0x18, 0x00, 0x00], // :
+    [0x00, 0x18, 0x18, 0x00, 0x18, 0x18, 0x30, 0x00], // ;
+    [0x0C, 0x18, 0x30, 0x60, 0x30, 0x18, 0x0C, 0x00], // <
+    [0x00, 0x00, 0x7E, 0x00, 0x7E, 0x00, 0x00, 0x00], // =
+    [0x30, 0x18, 0x0C, 0x06, 0x0C, 0x18, 0x30, 0x00], // >
+    [0x3C, 0x66, 0x06, 0x0C, 0x18, 0x00, 0x18, 0x00], // ?
+    [0x3C, 0x66, 0x6E, 0x6E, 0x60, 0x30, 0x1C, 0x00], // @
+    [0x18, 0x3C, 0x66, 0x66, 0x7E, 0x66, 0x66, 0x00], // A
+    [0xFC, 0x66, 0x66, 0x7C, 0x66, 0x66, 0xFC, 0x00], // B
+    [0x3C, 0x66, 0x60, 0x60, 0x60, 0x66, 0x3C, 0x00], // C
+    [0xF8, 0x6C, 0x66, 0x66, 0x66, 0x6C, 0xF8, 0x00], // D
+    [0x7E, 0x60, 0x60, 0x78, 0x60, 0x60, 0x7E, 0x00], // E
+    [0x7E, 0x60, 0x60, 0x78, 0x60, 0x60, 0x60, 0x00], // F
+    [0x3C, 0x66, 0x60, 0x6E, 0x66, 0x66, 0x3C, 0x00], // G
+    [0x66, 0x66, 0x66, 0x7E, 0x66, 0x66, 0x66, 0x00], // H
+    [0x3C, 0x18, 0x18, 0x18, 0x18, 0x18, 0x3C, 0x00], // I
+    [0x1E, 0x0C, 0x0C, 0x0C, 0x0C, 0xCC, 0x78, 0x00], // J
+    [0x66, 0x6C, 0x78, 0x70, 0x78, 0x6C, 0x66, 0x00], // K
+    [0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x7E, 0x00], // L
+    [0x63, 0x77, 0x7F, 0x6B, 0x63, 0x63, 0x63, 0x00], // M
+    [0x66, 0x76, 0x7E, 0x7E, 0x6E, 0x66, 0x66, 0x00], // N
+    [0x3C, 0x66, 0x66, 0x66, 0x66, 0x66, 0x3C, 0x00], // O
+    [0xFC, 0x66, 0x66, 0x7C, 0x60, 0x60, 0x60, 0x00], // P
+    [0x3C, 0x66, 0x66, 0x66, 0x66, 0x6C, 0x36, 0x00], // Q
+    [0xFC, 0x66, 0x66, 0x7C, 0x6C, 0x66, 0x66, 0x00], // R
+    [0x3C, 0x66, 0x30, 0x18, 0x0C, 0x66, 0x3C, 0x00], // S
+    [0x7E, 0x5A, 0x18, 0x18, 0x18, 0x18, 0x18, 0x00], // T
+    [0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x3C, 0x00], // U
+    [0x66, 0x66, 0x66, 0x66, 0x66, 0x3C, 0x18, 0x00], // V
+    [0x63, 0x63, 0x63, 0x6B, 0x7F, 0x77, 0x63, 0x00], // W
+    [0x66, 0x66, 0x3C, 0x18, 0x3C, 0x66, 0x66, 0x00], // X
+    [0x66, 0x66, 0x66, 0x3C, 0x18, 0x18, 0x18, 0x00], // Y
+    [0x7E, 0x06, 0x0C, 0x18, 0x30, 0x60, 0x7E, 0x00], // Z
+    [0x3C, 0x30, 0x30, 0x30, 0x30, 0x30, 0x3C, 0x00], // [
+    [0x80, 0x40, 0x20, 0x10, 0x08, 0x04, 0x02, 0x00], // \
+    [0x3C, 0x0C, 0x0C, 0x0C, 0x0C, 0x0C, 0x3C, 0x00], // ]
+    [0x10, 0x38, 0x6C, 0xC6, 0x00, 0x00, 0x00, 0x00], // ^
+    [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF], // _
+    [0x30, 0x30, 0x18, 0x00, 0x00, 0x00, 0x00, 0x00], // `
+    [0x00, 0x00, 0x3C, 0x06, 0x3E, 0x66, 0x3E, 0x00], // a
+    [0x60, 0x60, 0x7C, 0x66, 0x66, 0x66, 0x7C, 0x00], // b
+    [0x00, 0x00, 0x3C, 0x60, 0x60, 0x66, 0x3C, 0x00], // c
+    [0x06, 0x06, 0x3E, 0x66, 0x66, 0x66, 0x3E, 0x00], // d
+    [0x00, 0x00, 0x3C, 0x66, 0x7E, 0x60, 0x3C, 0x00], // e
+    [0x1C, 0x30, 0x78, 0x30, 0x30, 0x30, 0x30, 0x00], // f
+    [0x00, 0x00, 0x3E, 0x66, 0x66, 0x3E, 0x06, 0x3C], // g
+    [0x60, 0x60, 0x7C, 0x66, 0x66, 0x66, 0x66, 0x00], // h
+    [0x18, 0x00, 0x38, 0x18, 0x18, 0x18, 0x3C, 0x00], // i
+    [0x06, 0x00, 0x06, 0x06, 0x06, 0x66, 0x66, 0x3C], // j
+    [0x60, 0x60, 0x66, 0x6C, 0x78, 0x6C, 0x66, 0x00], // k
+    [0x30, 0x30, 0x30, 0x30, 0x30, 0x30, 0x1C, 0x00], // l
+    [0x00, 0x00, 0x66, 0x7F, 0x7F, 0x6B, 0x63, 0x00], // m
+    [0x00, 0x00, 0x7C, 0x66, 0x66, 0x66, 0x66, 0x00], // n
+    [0x00, 0x00, 0x3C, 0x66, 0x66, 0x66, 0x3C, 0x00], // o
+    [0x00, 0x00, 0x7C, 0x66, 0x66, 0x7C, 0x60, 0x60], // p
+    [0x00, 0x00, 0x3E, 0x66, 0x66, 0x3E, 0x06, 0x06], // q
+    [0x00, 0x00, 0x7C, 0x66, 0x60, 0x60, 0x60, 0x00], // r
+    [0x00, 0x00, 0x3E, 0x60, 0x3C, 0x06, 0x7C, 0x00], // s
+    [0x30, 0x30, 0x7C, 0x30, 0x30, 0x30, 0x1C, 0x00], // t
+    [0x00, 0x00, 0x66, 0x66, 0x66, 0x66, 0x3E, 0x00], // u
+    [0x00, 0x00, 0x66, 0x66, 0x66, 0x3C, 0x18, 0x00], // v
+    [0x00, 0x00, 0x63, 0x6B, 0x7F, 0x7F, 0x36, 0x00], // w
+    [0x00, 0x00, 0x66, 0x3C, 0x18, 0x3C, 0x66, 0x00], // x
+    [0x00, 0x00, 0x66, 0x66, 0x66, 0x3E, 0x06, 0x3C], // y
+    [0x00, 0x00, 0x7E, 0x0C, 0x18, 0x30, 0x7E, 0x00], // z
+    [0x0C, 0x18, 0x18, 0x70, 0x18, 0x18, 0x0C, 0x00], // {
+    [0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x18, 0x00], // |
+    [0x30, 0x18, 0x18, 0x0E, 0x18, 0x18, 0x30, 0x00], // }
+    [0x3B, 0x6E, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00], // ~
+    [0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00], // (del)
+];
+
+// VGA-like colors (32-bit RGB)
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
+#[repr(u32)]
 pub enum Color {
-    Black = 0,
-    Blue = 1,
-    Green = 2,
-    Cyan = 3,
-    Red = 4,
-    Magenta = 5,
-    Brown = 6,
-    LightGray = 7,
-    DarkGray = 8,
-    LightBlue = 9,
-    LightGreen = 10,
-    LightCyan = 11,
-    LightRed = 12,
-    Pink = 13,
-    Yellow = 14,
-    White = 15,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(transparent)]
-pub struct ColorCode(u8);
-
-impl ColorCode {
-    pub fn new(foreground: Color, background: Color) -> ColorCode {
-        ColorCode((background as u8) << 4 | (foreground as u8))
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(C)]
-struct ScreenChar {
-    ascii_character: u8,
-    color_code: ColorCode,
-}
-
-const BUFFER_HEIGHT: usize = 25;
-const BUFFER_WIDTH: usize = 80;
-
-#[repr(transparent)]
-struct Buffer {
-    chars: [[Volatile<ScreenChar>; BUFFER_WIDTH]; BUFFER_HEIGHT],
+    Black = 0x000000,
+    Blue = 0x0000AA,
+    Green = 0x00AA00,
+    Cyan = 0x00AAAA,
+    Red = 0xAA0000,
+    Magenta = 0xAA00AA,
+    Brown = 0xAA5500,
+    LightGray = 0xAAAAAA,
+    DarkGray = 0x555555,
+    LightBlue = 0x5555FF,
+    LightGreen = 0x55FF55,
+    LightCyan = 0x55FFFF,
+    LightRed = 0xFF5555,
+    Pink = 0xFF55FF,
+    Yellow = 0xFFFF55,
+    White = 0xFFFFFF,
 }
 
 pub struct Writer {
-    column_position: usize,
-    row_position: usize,
-    color_code: ColorCode,
-    buffer: &'static mut Buffer,
+    framebuffer: &'static mut [u8],
+    info: FrameBufferInfo,
+    x_pos: usize,
+    y_pos: usize,
+    fg_color: u32,
+    bg_color: u32,
 }
 
 impl Writer {
-    pub fn write_byte(&mut self, byte: u8) {
-        match byte {
-            b'\n' => self.new_line(),
-            b'\x08' => self.backspace(),
-            byte => {
-                if self.column_position >= BUFFER_WIDTH {
-                    self.new_line();
-                }
-
-                let row = self.row_position;
-                let col = self.column_position;
-
-                let color_code = self.color_code;
-                self.buffer.chars[row][col].write(ScreenChar {
-                    ascii_character: byte,
-                    color_code,
-                });
-                self.column_position += 1;
-            }
-        }
-    }
-
-    pub fn write_string(&mut self, s: &str) {
-        for byte in s.bytes() {
-            match byte {
-                0x20..=0x7e | b'\n' | b'\x08' => self.write_byte(byte),
-                _ => self.write_byte(0xfe),
-            }
-        }
-    }
-
-    fn new_line(&mut self) {
-        if self.row_position < BUFFER_HEIGHT - 1 {
-            self.row_position += 1;
-        } else {
-            // スクロール
-            for row in 1..BUFFER_HEIGHT {
-                for col in 0..BUFFER_WIDTH {
-                    let character = self.buffer.chars[row].as_slice()[col].read();
-                    self.buffer.chars[row - 1][col].write(character);
-                }
-            }
-            self.clear_row(BUFFER_HEIGHT - 1);
-        }
-        self.column_position = 0;
-    }
-
-    fn clear_row(&mut self, row: usize) {
-        let blank = ScreenChar {
-            ascii_character: b' ',
-            color_code: self.color_code,
+    pub fn new(framebuffer: &'static mut [u8], info: FrameBufferInfo) -> Self {
+        let mut writer = Writer {
+            framebuffer,
+            info,
+            x_pos: 0,
+            y_pos: 0,
+            fg_color: Color::White as u32,
+            bg_color: Color::Black as u32,
         };
-        for col in 0..BUFFER_WIDTH {
-            self.buffer.chars[row][col].write(blank);
+        writer.clear_screen();
+        writer
+    }
+
+    fn write_pixel(&mut self, x: usize, y: usize, color: u32) {
+        if x >= self.info.width || y >= self.info.height {
+            return;
+        }
+
+        let pixel_offset = y * self.info.stride + x;
+        let color_bytes = color.to_le_bytes();
+        let bytes_per_pixel = self.info.bytes_per_pixel;
+        let byte_offset = pixel_offset * bytes_per_pixel;
+
+        match self.info.pixel_format {
+            PixelFormat::Rgb => {
+                if byte_offset + 2 < self.framebuffer.len() {
+                    self.framebuffer[byte_offset] = color_bytes[0];
+                    self.framebuffer[byte_offset + 1] = color_bytes[1];
+                    self.framebuffer[byte_offset + 2] = color_bytes[2];
+                }
+            }
+            PixelFormat::Bgr => {
+                if byte_offset + 2 < self.framebuffer.len() {
+                    self.framebuffer[byte_offset] = color_bytes[2];
+                    self.framebuffer[byte_offset + 1] = color_bytes[1];
+                    self.framebuffer[byte_offset + 2] = color_bytes[0];
+                }
+            }
+            PixelFormat::U8 => {
+                if byte_offset < self.framebuffer.len() {
+                    self.framebuffer[byte_offset] = color_bytes[0];
+                }
+            }
+            _ => {}
         }
     }
 
-    pub fn backspace(&mut self) {
-        if self.column_position > 0 {
-            self.column_position -= 1;
-            let row = self.row_position;
-            let col = self.column_position;
-            let color_code = self.color_code;
-            self.buffer.chars[row][col].write(ScreenChar {
-                ascii_character: b' ',
-                color_code,
-            });
+    pub fn write_char(&mut self, c: char) {
+        match c {
+            '\n' => self.newline(),
+            '\x08' => self.backspace(),
+            _ => {
+                if self.x_pos + 8 >= self.info.width {
+                    self.newline();
+                }
+                if self.y_pos + 8 >= self.info.height {
+                    self.scroll();
+                }
+
+                let glyph_idx = (c as usize).saturating_sub(32);
+                if glyph_idx < FONT.len() {
+                    let glyph = FONT[glyph_idx];
+                    for (row, byte) in glyph.iter().enumerate() {
+                        for col in 0..8 {
+                            let color = if (byte & (0x80 >> col)) != 0 {
+                                self.fg_color
+                            } else {
+                                self.bg_color
+                            };
+                            self.write_pixel(self.x_pos + col, self.y_pos + row, color);
+                        }
+                    }
+                }
+                self.x_pos += 8;
+            }
+        }
+    }
+
+    fn newline(&mut self) {
+        self.x_pos = 0;
+        self.y_pos += 8;
+        if self.y_pos + 8 >= self.info.height {
+            self.scroll();
+        }
+    }
+
+    fn backspace(&mut self) {
+        if self.x_pos >= 8 {
+            self.x_pos -= 8;
+            for row in 0..8 {
+                for col in 0..8 {
+                    self.write_pixel(self.x_pos + col, self.y_pos + row, self.bg_color);
+                }
+            }
+        }
+    }
+
+    fn scroll(&mut self) {
+        // Simple scroll by clearing screen if it's too much (robust for now)
+        if self.y_pos + 16 >= self.info.height {
+            self.clear_screen();
         }
     }
 
     pub fn clear_screen(&mut self) {
-        for row in 0..BUFFER_HEIGHT {
-            self.clear_row(row);
+        for i in 0..self.framebuffer.len() {
+            self.framebuffer[i] = 0;
         }
-        self.column_position = 0;
-        self.row_position = 0;
+        self.x_pos = 0;
+        self.y_pos = 0;
     }
 
-    pub fn set_color(&mut self, foreground: Color, background: Color) {
-        self.color_code = ColorCode::new(foreground, background);
+    pub fn set_color(&mut self, fg: Color, bg: Color) {
+        self.fg_color = fg as u32;
+        self.bg_color = bg as u32;
     }
 
-    // カーソル位置を更新（ハードウェアカーソル）
-    pub fn update_cursor(&self) {
-        let pos = self.row_position * BUFFER_WIDTH + self.column_position;
-        unsafe {
-            // VGA カーソル位置レジスタ
-            x86_64::instructions::port::Port::new(0x3D4).write(0x0Fu8);
-            x86_64::instructions::port::Port::new(0x3D5).write((pos & 0xFF) as u8);
-            x86_64::instructions::port::Port::new(0x3D4).write(0x0Eu8);
-            x86_64::instructions::port::Port::new(0x3D5).write(((pos >> 8) & 0xFF) as u8);
-        }
-    }
-
-    // カーソルを有効化
-    pub fn enable_cursor(&self) {
-        unsafe {
-            x86_64::instructions::port::Port::new(0x3D4).write(0x0Au8);
-            x86_64::instructions::port::Port::new(0x3D5).write(0x0Eu8); // カーソルスタート
-            x86_64::instructions::port::Port::new(0x3D4).write(0x0Bu8);
-            x86_64::instructions::port::Port::new(0x3D5).write(0x0Fu8); // カーソルエンド
-        }
-    }
+    pub fn update_cursor(&self) {}
+    pub fn enable_cursor(&self) {}
 }
 
 impl fmt::Write for Writer {
     fn write_str(&mut self, s: &str) -> fmt::Result {
-        self.write_string(s);
+        for c in s.chars() {
+            self.write_char(c);
+        }
         Ok(())
     }
 }
 
-lazy_static! {
-    pub static ref WRITER: Mutex<Writer> = Mutex::new(Writer {
-        column_position: 0,
-        row_position: 0,
-        color_code: ColorCode::new(Color::LightGreen, Color::Black),
-        buffer: unsafe { &mut *(0xb8000 as *mut Buffer) },
-    });
+pub struct LockedWriter(Option<Writer>);
+
+impl LockedWriter {
+    pub const fn empty() -> Self {
+        LockedWriter(None)
+    }
+
+    pub fn init(&mut self, framebuffer: &'static mut [u8], info: FrameBufferInfo) {
+        self.0 = Some(Writer::new(framebuffer, info));
+    }
+
+    pub fn lock(&mut self) -> &mut Writer {
+        self.0.as_mut().expect("Writer not initialized")
+    }
+
+    pub fn clear_screen(&mut self) {
+        if let Some(ref mut w) = self.0 {
+            w.clear_screen();
+        }
+    }
+
+    pub fn set_color(&mut self, fg: Color, bg: Color) {
+        if let Some(ref mut w) = self.0 {
+            w.set_color(fg, bg);
+        }
+    }
+
+    pub fn update_cursor(&self) {
+        if let Some(ref w) = self.0 {
+            w.update_cursor();
+        }
+    }
+
+    pub fn enable_cursor(&self) {
+        if let Some(ref w) = self.0 {
+            w.enable_cursor();
+        }
+    }
 }
 
-// print/println マクロ
+pub static WRITER: Mutex<LockedWriter> = Mutex::new(LockedWriter::empty());
+
 #[macro_export]
 macro_rules! print {
     ($($arg:tt)*) => ($crate::vga_buffer::_print(format_args!($($arg)*)));
@@ -201,19 +328,27 @@ pub fn _print(args: fmt::Arguments) {
     use x86_64::instructions::interrupts;
 
     interrupts::without_interrupts(|| {
-        WRITER.lock().write_fmt(args).unwrap();
+        let mut writer = WRITER.lock();
+        if writer.0.is_some() {
+            writer.lock().write_fmt(args).unwrap();
+        }
     });
 }
 
-// カラー付き印字用ヘルパー
 pub fn print_colored(s: &str, fg: Color, bg: Color) {
     use x86_64::instructions::interrupts;
+    use core::fmt::Write;
 
     interrupts::without_interrupts(|| {
-        let mut writer = WRITER.lock();
-        let old_color = writer.color_code;
-        writer.color_code = ColorCode::new(fg, bg);
-        writer.write_string(s);
-        writer.color_code = old_color;
+        let mut locked = WRITER.lock();
+        if let Some(ref mut writer) = locked.0 {
+            let old_fg = writer.fg_color;
+            let old_bg = writer.bg_color;
+            writer.fg_color = fg as u32;
+            writer.bg_color = bg as u32;
+            writer.write_str(s).unwrap();
+            writer.fg_color = old_fg;
+            writer.bg_color = old_bg;
+        }
     });
 }

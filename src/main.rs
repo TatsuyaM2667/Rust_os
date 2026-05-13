@@ -19,13 +19,27 @@ mod pci;
 mod serial;
 mod shell;
 
-use bootloader::{entry_point, BootInfo};
+use bootloader_api::{entry_point, BootInfo, BootloaderConfig};
 use core::panic::PanicInfo;
 
-// bootloader クレートのエントリポイントマクロ
-entry_point!(kernel_main);
+// bootloader_api の設定
+pub static BOOTLOADER_CONFIG: BootloaderConfig = {
+    let mut config = BootloaderConfig::new_default();
+    config.mappings.physical_memory = Some(bootloader_api::config::Mapping::Dynamic);
+    config
+};
 
-fn kernel_main(boot_info: &'static BootInfo) -> ! {
+// エントリポイント
+entry_point!(kernel_main, config = &BOOTLOADER_CONFIG);
+
+fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
+    // === Phase 0: コンソールの初期化 ===
+    if let Some(framebuffer) = boot_info.framebuffer.as_mut() {
+        let info = framebuffer.info();
+        let buffer = framebuffer.buffer_mut();
+        vga_buffer::WRITER.lock().init(buffer, info);
+    }
+
     // === Phase 1: 基本初期化 ===
     // GDTの設定
     gdt::init();
@@ -39,10 +53,10 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     }
 
     // === Phase 2: メモリ管理の初期化 ===
-    let phys_mem_offset = x86_64::VirtAddr::new(boot_info.physical_memory_offset);
+    let phys_mem_offset = x86_64::VirtAddr::new(boot_info.physical_memory_offset.into_option().unwrap());
     let mut mapper = unsafe { memory::init(phys_mem_offset) };
     let mut frame_allocator =
-        unsafe { memory::BootInfoFrameAllocator::init(&boot_info.memory_map) };
+        unsafe { memory::BootInfoFrameAllocator::init(&boot_info.memory_regions) };
 
     // ヒープの初期化
     memory::init_heap(&mut mapper, &mut frame_allocator).expect("Heap initialization failed");
