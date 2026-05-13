@@ -13,6 +13,7 @@ mod gdt;
 mod gui;
 mod interrupts;
 mod memory;
+mod mouse;
 mod net;
 mod pacman;
 mod pci;
@@ -41,7 +42,7 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     }
 
     // シリアル出力で起動を確認
-    serial_println!("Kernel started!");
+    serial_println!("RustOS Kernel started!");
 
     let phys_mem_offset_val = boot_info.physical_memory_offset.into_option().expect("Physical memory offset not found");
     serial_println!("Physical memory offset: 0x{:x}", phys_mem_offset_val);
@@ -69,8 +70,8 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         // すべての割り込みを一度マスクする
         pics.write_masks(0xFF, 0xFF);
         pics.initialize();
-        // IRQ 0 (タイマー) と IRQ 1 (キーボード) のマスクを解除
-        pics.write_masks(0xFC, 0xFF);
+        // IRQ 0 (タイマー), IRQ 1 (キーボード), IRQ 2 (カスケード), IRQ 12 (マウス) のマスクを解除
+        pics.write_masks(0xF8, 0xEF);
     }
 
     // PS/2キーボードの初期化 (Port 0x64/0x60)
@@ -81,19 +82,24 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         let mut data_port = Port::<u8>::new(0x60);
         
         // 0xAE: キーボードインタフェースの有効化
+        while (cmd_port.read() & 2) != 0 {}
         cmd_port.write(0xAE);
         
         // ステータスレジスタを確認しながら入力バッファを空にする
         for _ in 0..1000 {
-            let status = cmd_port.read();
-            if (status & 0x01) != 0 {
+            if (cmd_port.read() & 0x01) != 0 {
                 data_port.read();
             }
         }
         
-        // 0xF4: キーボードのスキャン開始（コマンド）
+        // 0xF4: キーボードのスキャン開始
+        while (cmd_port.read() & 2) != 0 {}
         data_port.write(0xF4);
     }
+
+    // PS/2マウスの初期化
+    serial_println!("Initializing Mouse...");
+    mouse::init();
 
     // === Phase 2: メモリ管理の初期化 ===
     serial_println!("Initializing Memory Management...");

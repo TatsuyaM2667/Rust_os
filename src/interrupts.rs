@@ -19,6 +19,7 @@ pub enum InterruptIndex {
     Timer = PIC_1_OFFSET,
     Keyboard,
     Network = PIC_1_OFFSET + 11, // Standard IRQ 11 for PCI
+    Mouse = PIC_1_OFFSET + 12,   // IRQ 12
 }
 
 impl InterruptIndex {
@@ -53,6 +54,7 @@ lazy_static! {
         idt[InterruptIndex::Timer.as_usize()].set_handler_fn(timer_interrupt_handler);
         idt[InterruptIndex::Keyboard.as_usize()].set_handler_fn(keyboard_interrupt_handler);
         idt[InterruptIndex::Network.as_usize()].set_handler_fn(network_interrupt_handler);
+        idt[InterruptIndex::Mouse.as_usize()].set_handler_fn(mouse_interrupt_handler);
         idt
     };
 }
@@ -137,6 +139,21 @@ extern "x86-interrupt" fn network_interrupt_handler(_stack_frame: InterruptStack
     unsafe {
         PICS.lock()
             .notify_end_of_interrupt(InterruptIndex::Network.as_u8());
+    }
+}
+
+extern "x86-interrupt" fn mouse_interrupt_handler(_stack_frame: InterruptStackFrame) {
+    use x86_64::instructions::port::Port;
+
+    let mut port = Port::new(0x60);
+    let packet: u8 = unsafe { port.read() };
+    
+    // マウスハンドラにデータを送る
+    crate::mouse::handle_interrupt(packet);
+
+    unsafe {
+        PICS.lock()
+            .notify_end_of_interrupt(InterruptIndex::Mouse.as_u8());
     }
 }
 

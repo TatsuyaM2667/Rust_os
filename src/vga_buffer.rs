@@ -154,6 +154,10 @@ impl Writer {
         writer
     }
 
+    pub fn info(&self) -> FrameBufferInfo {
+        self.info
+    }
+
     fn write_pixel(&mut self, x: usize, y: usize, color: u32) {
         if x >= self.info.width || y >= self.info.height {
             return;
@@ -185,6 +189,32 @@ impl Writer {
                 }
             }
             _ => {}
+        }
+    }
+
+    pub fn draw_rect(&mut self, x: usize, y: usize, width: usize, height: usize, color: u32) {
+        for dy in 0..height {
+            for dx in 0..width {
+                self.write_pixel(x + dx, y + dy, color);
+            }
+        }
+    }
+
+    pub fn draw_char_at(&mut self, x: usize, y: usize, c: char, color: u32, scale: usize) {
+        let glyph_idx = (c as usize).saturating_sub(32);
+        if glyph_idx < FONT.len() {
+            let glyph = FONT[glyph_idx];
+            for (row, byte) in glyph.iter().enumerate() {
+                for col in 0..8 {
+                    if (byte & (0x80 >> col)) != 0 {
+                        for dy in 0..scale {
+                            for dx in 0..scale {
+                                self.write_pixel(x + col * scale + dx, y + row * scale + dy, color);
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -320,6 +350,10 @@ impl LockedWriter {
         if let Some(ref w) = self.0 {
             w.enable_cursor();
         }
+    }
+
+    pub fn get_mut(&mut self) -> Option<&mut Writer> {
+        self.0.as_mut()
     }
 }
 

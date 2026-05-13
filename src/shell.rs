@@ -37,11 +37,11 @@ fn print_banner() {
 
     vga_buffer::print_colored(
         r"
-  ____            _    ___  ____  
- |  _ \ _   _ ___| |_ / _ \/ ___| 
- | |_) | | | / __| __| | | \___ \ 
+  ____            _    ___  ____
+ |  _ \ _   _ ___| |_ / _ \/ ___|
+ | |_) | | | / __| __| | | \___ \
  |  _ <| |_| \__ \ |_| |_| |___) |
- |_| \_\\__,_|___/\__|\___/|____/ 
+ |_| \_\\__,_|___/\__|\___/|____/
 ",
         Color::LightCyan,
         Color::Black,
@@ -62,7 +62,11 @@ fn print_banner() {
 
 fn print_prompt() {
     let current_dir = CURRENT_DIR.lock();
-    vga_buffer::print_colored(&alloc::format!("root@rust-os:{}# ", *current_dir), Color::LightGreen, Color::Black);
+    vga_buffer::print_colored(
+        &alloc::format!("root@rust-os:{}# ", *current_dir),
+        Color::LightGreen,
+        Color::Black,
+    );
     // カーソル位置を更新
     x86_64::instructions::interrupts::without_interrupts(|| {
         vga_buffer::WRITER.lock().update_cursor();
@@ -272,7 +276,9 @@ fn cmd_pwd() {
 }
 
 fn cmd_cd(args: &str) {
-    if args.is_empty() { return; }
+    if args.is_empty() {
+        return;
+    }
     let mut current = CURRENT_DIR.lock();
     if args == ".." {
         if *current != "/" {
@@ -291,7 +297,7 @@ fn cmd_cd(args: &str) {
         } else {
             alloc::format!("{}/{}", *current, args)
         };
-        
+
         let mut fs = crate::fs::FILESYSTEM.lock();
         if fs.read_dir(&new_path).is_ok() {
             *current = new_path;
@@ -302,13 +308,19 @@ fn cmd_cd(args: &str) {
 }
 
 fn cmd_mkdir(args: &str) {
-    if args.is_empty() { return; }
+    if args.is_empty() {
+        return;
+    }
     let mut fs = crate::fs::FILESYSTEM.lock();
     let path = if args.starts_with('/') {
         args.to_string()
     } else {
         let current = CURRENT_DIR.lock();
-        if *current == "/" { alloc::format!("/{}", args) } else { alloc::format!("{}/{}", *current, args) }
+        if *current == "/" {
+            alloc::format!("/{}", args)
+        } else {
+            alloc::format!("{}/{}", *current, args)
+        }
     };
     if let Err(e) = fs.mkdir(&path) {
         println!("mkdir: {}: {}", args, e);
@@ -316,13 +328,19 @@ fn cmd_mkdir(args: &str) {
 }
 
 fn cmd_touch(args: &str) {
-    if args.is_empty() { return; }
+    if args.is_empty() {
+        return;
+    }
     let mut fs = crate::fs::FILESYSTEM.lock();
     let path = if args.starts_with('/') {
         args.to_string()
     } else {
         let current = CURRENT_DIR.lock();
-        if *current == "/" { alloc::format!("/{}", args) } else { alloc::format!("{}/{}", *current, args) }
+        if *current == "/" {
+            alloc::format!("/{}", args)
+        } else {
+            alloc::format!("{}/{}", *current, args)
+        }
     };
     if let Err(e) = fs.touch(&path) {
         println!("touch: {}: {}", args, e);
@@ -330,13 +348,19 @@ fn cmd_touch(args: &str) {
 }
 
 fn cmd_rm(args: &str) {
-    if args.is_empty() { return; }
+    if args.is_empty() {
+        return;
+    }
     let mut fs = crate::fs::FILESYSTEM.lock();
     let path = if args.starts_with('/') {
         args.to_string()
     } else {
         let current = CURRENT_DIR.lock();
-        if *current == "/" { alloc::format!("/{}", args) } else { alloc::format!("{}/{}", *current, args) }
+        if *current == "/" {
+            alloc::format!("/{}", args)
+        } else {
+            alloc::format!("{}/{}", *current, args)
+        }
     };
     if let Err(e) = fs.remove(&path) {
         println!("rm: {}: {}", args, e);
@@ -344,13 +368,19 @@ fn cmd_rm(args: &str) {
 }
 
 fn cmd_cat(args: &str) {
-    if args.is_empty() { return; }
+    if args.is_empty() {
+        return;
+    }
     let mut fs = crate::fs::FILESYSTEM.lock();
     let path = if args.starts_with('/') {
         args.to_string()
     } else {
         let current = CURRENT_DIR.lock();
-        if *current == "/" { alloc::format!("/{}", args) } else { alloc::format!("{}/{}", *current, args) }
+        if *current == "/" {
+            alloc::format!("/{}", args)
+        } else {
+            alloc::format!("{}/{}", *current, args)
+        }
     };
     match fs.read_file(&path) {
         Ok(data) => println!("{}", String::from_utf8_lossy(&data)),
@@ -372,17 +402,26 @@ fn cmd_pacman(args: &str) {
 
     match parts[0] {
         "-S" => {
-            if parts.len() < 2 { println!("error: no targets specified"); }
-            else { crate::pacman::install(parts[1]); }
+            if parts.len() < 2 {
+                println!("error: no targets specified");
+            } else {
+                crate::pacman::install(parts[1]);
+            }
         }
         "-Ss" => {
-            if parts.len() < 2 { println!("error: no targets specified"); }
-            else { crate::pacman::search(parts[1]); }
+            if parts.len() < 2 {
+                println!("error: no targets specified");
+            } else {
+                crate::pacman::search(parts[1]);
+            }
         }
         "-Qs" | "-Q" => crate::pacman::list_installed(),
         "-R" => {
-            if parts.len() < 2 { println!("error: no targets specified"); }
-            else { crate::pacman::remove(parts[1]); }
+            if parts.len() < 2 {
+                println!("error: no targets specified");
+            } else {
+                crate::pacman::remove(parts[1]);
+            }
         }
         _ => println!("pacman: invalid option: {}", parts[0]),
     }
@@ -484,7 +523,7 @@ fn cmd_info() {
         let mut edx: u32;
         let mut ecx: u32;
         let max_leaf: u32;
-        
+
         core::arch::asm!(
             "push rbx",
             "cpuid",
@@ -500,7 +539,7 @@ fn cmd_info() {
         vendor[0..4].copy_from_slice(&ebx.to_le_bytes());
         vendor[4..8].copy_from_slice(&edx.to_le_bytes());
         vendor[8..12].copy_from_slice(&ecx.to_le_bytes());
-        
+
         (max_leaf, vendor)
     };
 
@@ -512,10 +551,7 @@ fn cmd_info() {
 
 fn cmd_mem() {
     vga_buffer::print_colored("=== Memory Information ===\n", Color::Yellow, Color::Black);
-    println!(
-        "  Heap Start:   0x{:x}",
-        crate::memory::HEAP_START
-    );
+    println!("  Heap Start:   0x{:x}", crate::memory::HEAP_START);
     println!(
         "  Heap Size:    {} KiB ({} bytes)",
         crate::memory::HEAP_SIZE / 1024,
@@ -561,9 +597,22 @@ fn cmd_uptime() {
 
 fn cmd_color(args: &str) {
     let colors = [
-        "black", "blue", "green", "cyan", "red", "magenta", "brown",
-        "lightgray", "darkgray", "lightblue", "lightgreen", "lightcyan",
-        "lightred", "pink", "yellow", "white",
+        "black",
+        "blue",
+        "green",
+        "cyan",
+        "red",
+        "magenta",
+        "brown",
+        "lightgray",
+        "darkgray",
+        "lightblue",
+        "lightgreen",
+        "lightcyan",
+        "lightred",
+        "pink",
+        "yellow",
+        "white",
     ];
 
     if args.is_empty() {
@@ -782,7 +831,7 @@ fn cmd_reboot() {
             x86_64::instructions::port::Port::new(0x64);
         port.write(0xFE);
     }
-    
+
     loop {
         x86_64::instructions::hlt();
     }
@@ -857,8 +906,10 @@ fn cmd_net() {
     if let Some(ref rtl) = *device {
         let mac = rtl.mac_address();
         println!("  Device:       RTL8139 (PCI)");
-        println!("  MAC Address:  {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
-            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        println!(
+            "  MAC Address:  {:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}",
+            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]
+        );
         println!("  Status:       Initialized");
     } else {
         println!("  No network device found or initialized.");
@@ -893,4 +944,3 @@ fn cmd_gui() {
     // After returning from GUI, clear screen and return to shell
     cmd_clear();
 }
-

@@ -1,3 +1,3 @@
-# Rust_OS
+# RUMI OS
 
 Rust製のOS
